@@ -5,14 +5,16 @@ import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'screens/home_screen.dart';
+import 'utils/app_settings.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Android/iOS/macOS use the native sqflite plugin; Windows/Linux need FFI.
   if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
+  await AppSettings.load();
   runApp(const StringsPharmacyApp());
 }
 

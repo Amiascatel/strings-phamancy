@@ -3,10 +3,11 @@ import 'package:flutter/services.dart';
 
 import '../db/database_helper.dart';
 import '../models/medicine.dart';
+import '../models/report.dart';
 import '../models/stock_transaction.dart';
 import '../utils/format.dart';
 import '../widgets/status_badges.dart';
-import 'dashboard_screen.dart';
+import '../widgets/transaction_tile.dart';
 import 'medicine_form_screen.dart';
 
 class MedicineDetailScreen extends StatefulWidget {
@@ -20,6 +21,7 @@ class MedicineDetailScreen extends StatefulWidget {
 class _MedicineDetailScreenState extends State<MedicineDetailScreen> {
   Medicine? _med;
   List<StockTransaction> _history = [];
+  SalesBreakdown? _sales;
   bool _loading = true;
 
   @override
@@ -32,10 +34,12 @@ class _MedicineDetailScreenState extends State<MedicineDetailScreen> {
     final db = DatabaseHelper.instance;
     final med = await db.getMedicine(widget.medicineId);
     final history = await db.getTransactions(medicineId: widget.medicineId);
+    final sales = await db.getMedicineSales(widget.medicineId);
     if (!mounted) return;
     setState(() {
       _med = med;
       _history = history;
+      _sales = sales;
       _loading = false;
     });
   }
@@ -73,6 +77,8 @@ class _MedicineDetailScreenState extends State<MedicineDetailScreen> {
     final m = _med!;
     final qtyCtrl = TextEditingController();
     final noteCtrl = TextEditingController();
+    final costCtrl =
+        TextEditingController(text: m.costPrice.toStringAsFixed(2));
     final formKey = GlobalKey<FormState>();
 
     final result = await showDialog<(int, String)>(
@@ -108,6 +114,22 @@ class _MedicineDetailScreenState extends State<MedicineDetailScreen> {
                   return null;
                 },
               ),
+              if (type == TransactionType.stockIn) ...[
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: costCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Cost price per unit',
+                    helperText: 'Updates the cost used for profit',
+                  ),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(
+                        RegExp(r'^\d*\.?\d{0,2}'))
+                  ],
+                ),
+              ],
               const SizedBox(height: 12),
               TextFormField(
                 controller: noteCtrl,
@@ -115,8 +137,9 @@ class _MedicineDetailScreenState extends State<MedicineDetailScreen> {
                   labelText: 'Note (optional)',
                   hintText: switch (type) {
                     TransactionType.stockIn => 'e.g. Invoice #, supplier',
-                    TransactionType.stockOut => 'e.g. Sold, damaged, returned',
-                    TransactionType.adjust => 'e.g. Stock take',
+                    TransactionType.stockOut =>
+                      'e.g. Damaged, expired, returned to supplier',
+                    _ => 'e.g. Stock take',
                   },
                 ),
               ),
@@ -139,8 +162,10 @@ class _MedicineDetailScreenState extends State<MedicineDetailScreen> {
         ],
       ),
     );
+    final unitCost = double.tryParse(costCtrl.text);
     qtyCtrl.dispose();
     noteCtrl.dispose();
+    costCtrl.dispose();
     if (result == null) return;
 
     try {
@@ -149,6 +174,7 @@ class _MedicineDetailScreenState extends State<MedicineDetailScreen> {
         type: type,
         quantity: result.$1,
         note: result.$2,
+        unitCost: type == TransactionType.stockIn ? unitCost : null,
       );
       await _load();
     } on StateError catch (e) {
@@ -259,6 +285,18 @@ class _MedicineDetailScreenState extends State<MedicineDetailScreen> {
               ],
             ),
           ),
+          if (_sales != null) ...[
+            const SizedBox(height: 16),
+            Text('Sales (all time)', style: t.titleMedium),
+            const SizedBox(height: 8),
+            Card(
+              child: Column(children: [
+                _info('Units sold', '${_sales!.count} ${m.unit}'),
+                _info('Revenue', money(_sales!.revenue)),
+                _info('Gross profit', money(_sales!.profit)),
+              ]),
+            ),
+          ],
           const SizedBox(height: 16),
           Text('Stock history', style: t.titleMedium),
           const SizedBox(height: 8),

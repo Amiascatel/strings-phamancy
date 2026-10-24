@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../db/database_helper.dart';
 import '../models/stock_transaction.dart';
-import 'dashboard_screen.dart';
+import '../widgets/transaction_tile.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});

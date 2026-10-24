@@ -2,13 +2,27 @@ import 'package:flutter/material.dart';
 
 import '../db/database_helper.dart';
 import '../models/medicine.dart';
-import '../models/stock_transaction.dart';
+import '../models/report.dart';
+import '../models/sale.dart';
+import '../utils/app_settings.dart';
 import '../utils/format.dart';
+import '../widgets/range_selector.dart';
+import '../widgets/stat_card.dart';
+import 'history_screen.dart';
 import 'inventory_screen.dart';
+import 'sale_detail_screen.dart';
+import 'settings_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final void Function(InventoryFilter filter) onOpenInventory;
-  const DashboardScreen({super.key, required this.onOpenInventory});
+  final VoidCallback onNewSale;
+  final VoidCallback onOpenSales;
+  const DashboardScreen({
+    super.key,
+    required this.onOpenInventory,
+    required this.onNewSale,
+    required this.onOpenSales,
+  });
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -16,7 +30,9 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   List<Medicine> _meds = [];
-  List<StockTransaction> _recent = [];
+  SalesSummary _today = const SalesSummary();
+  SalesSummary _month = const SalesSummary();
+  List<Sale> _recentSales = [];
   bool _loading = true;
 
   @override
@@ -27,34 +43,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _load() async {
     final db = DatabaseHelper.instance;
+    final today = DateSpan.preset(RangePreset.today);
+    final month = DateSpan.preset(RangePreset.thisMonth);
     final meds = await db.getMedicines();
-    final recent = await db.getTransactions(limit: 8);
+    final t = await db.getSalesSummary(today.from, today.to);
+    final m = await db.getSalesSummary(month.from, month.to);
+    final recent = await db.getSales(limit: 5);
     if (!mounted) return;
     setState(() {
       _meds = meds;
-      _recent = recent;
+      _today = t;
+      _month = m;
+      _recentSales = recent;
       _loading = false;
     });
   }
 
+  Future<void> _push(Widget screen) async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+    _load();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final totalUnits = _meds.fold<int>(0, (s, m) => s + m.quantity);
     final stockValue = _meds.fold<double>(0, (s, m) => s + m.stockValue);
-    final retailValue =
-        _meds.fold<double>(0, (s, m) => s + m.quantity * m.sellingPrice);
     final low = _meds.where((m) => m.isLowStock).length;
     final expiring = _meds.where((m) => m.isExpiringSoon).length;
     final expired = _meds.where((m) => m.isExpired).length;
+    final t = Theme.of(context).textTheme;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Strings Pharmacy'),
+        title: Text(AppSettings.pharmacyName),
         actions: [
           IconButton(
-              tooltip: 'Refresh',
-              onPressed: _load,
-              icon: const Icon(Icons.refresh)),
+              tooltip: 'Stock history',
+              onPressed: () => _push(const HistoryScreen()),
+              icon: const Icon(Icons.history)),
+          IconButton(
+              tooltip: 'Settings',
+              onPressed: () => _push(const SettingsScreen()),
+              icon: const Icon(Icons.settings_outlined)),
         ],
       ),
       body: _loading
@@ -64,168 +93,117 @@ class _DashboardScreenState extends State<DashboardScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  LayoutBuilder(builder: (context, c) {
-                    final cols = c.maxWidth > 700 ? 3 : 2;
-                    final w = (c.maxWidth - (cols - 1) * 12) / cols;
-                    Widget card(Widget child) => SizedBox(width: w, child: child);
-                    return Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: [
-                        card(_StatCard(
-                          icon: Icons.medication,
-                          label: 'Products',
-                          value: '${_meds.length}',
-                          sub: '$totalUnits units in stock',
-                          color: Colors.teal,
-                          onTap: () =>
-                              widget.onOpenInventory(InventoryFilter.all),
-                        )),
-                        card(_StatCard(
-                          icon: Icons.payments_outlined,
-                          label: 'Stock value (cost)',
-                          value: money(stockValue),
-                          sub: 'Retail: ${money(retailValue)}',
-                          color: Colors.indigo,
-                        )),
-                        card(_StatCard(
-                          icon: Icons.trending_down,
-                          label: 'Low stock',
-                          value: '$low',
-                          sub: 'At or below reorder level',
-                          color: Colors.amber,
-                          onTap: () =>
-                              widget.onOpenInventory(InventoryFilter.lowStock),
-                        )),
-                        card(_StatCard(
-                          icon: Icons.schedule,
-                          label: 'Expiring soon',
-                          value: '$expiring',
-                          sub: 'Within ${Medicine.expiringSoonDays} days',
-                          color: Colors.orange,
-                          onTap: () =>
-                              widget.onOpenInventory(InventoryFilter.expiring),
-                        )),
-                        card(_StatCard(
-                          icon: Icons.dangerous_outlined,
-                          label: 'Expired',
-                          value: '$expired',
-                          sub: 'Remove from shelves',
-                          color: Colors.red,
-                          onTap: () =>
-                              widget.onOpenInventory(InventoryFilter.expired),
-                        )),
-                      ],
-                    );
-                  }),
-                  const SizedBox(height: 24),
-                  Text('Recent activity',
-                      style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 8),
-                  if (_recent.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Center(
-                          child: Text(
-                              'No activity yet. Add medicines from the Inventory tab.')),
+                  FilledButton.icon(
+                    onPressed: widget.onNewSale,
+                    icon: const Icon(Icons.point_of_sale),
+                    label: const Text('New sale'),
+                    style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16)),
+                  ),
+                  const SectionTitle('Sales'),
+                  StatGrid(children: [
+                    StatCard(
+                      icon: Icons.today,
+                      label: "Today's sales",
+                      value: money(_today.revenue),
+                      sub: '${_today.salesCount} sale(s)',
+                      color: Colors.indigo,
+                      onTap: widget.onOpenSales,
+                    ),
+                    StatCard(
+                      icon: Icons.trending_up,
+                      label: "Today's profit",
+                      value: money(_today.profit),
+                      sub: 'Margin ${percent(_today.margin)}',
+                      color: Colors.green,
+                      onTap: widget.onOpenSales,
+                    ),
+                    StatCard(
+                      icon: Icons.calendar_month,
+                      label: 'This month',
+                      value: money(_month.revenue),
+                      sub: '${_month.salesCount} sale(s)',
+                      color: Colors.blue,
+                    ),
+                    StatCard(
+                      icon: Icons.savings_outlined,
+                      label: 'Profit this month',
+                      value: money(_month.profit),
+                      sub: 'Margin ${percent(_month.margin)}',
+                      color: Colors.teal,
+                    ),
+                  ]),
+                  const SectionTitle('Inventory'),
+                  StatGrid(children: [
+                    StatCard(
+                      icon: Icons.medication,
+                      label: 'Products',
+                      value: '${_meds.length}',
+                      sub: 'Stock value ${money(stockValue)}',
+                      color: Colors.teal,
+                      onTap: () => widget.onOpenInventory(InventoryFilter.all),
+                    ),
+                    StatCard(
+                      icon: Icons.trending_down,
+                      label: 'Low stock',
+                      value: '$low',
+                      sub: 'Need reordering',
+                      color: Colors.amber.shade700,
+                      onTap: () =>
+                          widget.onOpenInventory(InventoryFilter.lowStock),
+                    ),
+                    StatCard(
+                      icon: Icons.schedule,
+                      label: 'Expiring soon',
+                      value: '$expiring',
+                      sub: 'Within ${Medicine.expiringSoonDays} days',
+                      color: Colors.orange,
+                      onTap: () =>
+                          widget.onOpenInventory(InventoryFilter.expiring),
+                    ),
+                    StatCard(
+                      icon: Icons.dangerous_outlined,
+                      label: 'Expired',
+                      value: '$expired',
+                      sub: 'Remove from shelves',
+                      color: Colors.red,
+                      onTap: () =>
+                          widget.onOpenInventory(InventoryFilter.expired),
+                    ),
+                  ]),
+                  SectionTitle('Recent sales',
+                      trailing: TextButton(
+                          onPressed: widget.onOpenSales,
+                          child: const Text('See all'))),
+                  if (_recentSales.isEmpty)
+                    const Card(
+                      child: Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text('No sales yet. Tap "New sale" to start.'),
+                      ),
                     )
                   else
                     Card(
-                      child: Column(
-                        children: [
-                          for (final t in _recent) TransactionTile(t),
-                        ],
-                      ),
+                      child: Column(children: [
+                        for (final s in _recentSales)
+                          ListTile(
+                            onTap: () =>
+                                _push(SaleDetailScreen(saleId: s.id)),
+                            leading: Icon(
+                                s.isVoided ? Icons.block : Icons.receipt_long),
+                            title: Text(s.receiptNo),
+                            subtitle: Text(
+                                '${dateTime(s.createdAt)} • ${s.paymentMethod.label}'
+                                '${s.isVoided ? ' • VOIDED' : ''}'),
+                            trailing: Text(money(s.total),
+                                style: t.titleSmall
+                                    ?.copyWith(fontWeight: FontWeight.bold)),
+                          ),
+                      ]),
                     ),
                 ],
               ),
             ),
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-  final String sub;
-  final MaterialColor color;
-  final VoidCallback? onTap;
-
-  const _StatCard({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.sub,
-    required this.color,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = Theme.of(context).textTheme;
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, color: color),
-              const SizedBox(height: 8),
-              Text(label, style: t.labelMedium),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(value,
-                    style: t.headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.bold)),
-              ),
-              Text(sub,
-                  style: t.bodySmall,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class TransactionTile extends StatelessWidget {
-  final StockTransaction t;
-  final bool showName;
-  const TransactionTile(this.t, {super.key, this.showName = true});
-
-  @override
-  Widget build(BuildContext context) {
-    final (icon, color, qtyText) = switch (t.type) {
-      TransactionType.stockIn => (Icons.add_circle, Colors.green, '+${t.quantity}'),
-      TransactionType.stockOut => (Icons.remove_circle, Colors.red, '-${t.quantity}'),
-      TransactionType.adjust => (Icons.tune, Colors.blueGrey, '=${t.quantity}'),
-    };
-    final subtitle = [
-      if (showName) t.type.label,
-      dateTime(t.createdAt),
-      if (t.note.isNotEmpty) t.note,
-    ].join(' • ');
-    return ListTile(
-      leading: Icon(icon, color: color),
-      title: Text(showName ? t.medicineName : t.type.label),
-      subtitle: Text(subtitle),
-      trailing: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(qtyText,
-              style: TextStyle(fontWeight: FontWeight.bold, color: color)),
-          Text('Bal: ${t.balanceAfter}',
-              style: Theme.of(context).textTheme.bodySmall),
-        ],
-      ),
     );
   }
 }

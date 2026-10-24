@@ -1,11 +1,16 @@
 enum TransactionType {
   stockIn('IN', 'Stock In'),
   stockOut('OUT', 'Stock Out'),
-  adjust('ADJUST', 'Adjustment');
+  adjust('ADJUST', 'Adjustment'),
+  sale('SALE', 'Sale'),
+  saleReturn('RETURN', 'Sale voided');
 
   final String code;
   final String label;
   const TransactionType(this.code, this.label);
+
+  /// Whether this movement adds to stock (vs. removes or sets it).
+  bool get isIncrease => this == stockIn || this == saleReturn;
 
   static TransactionType fromCode(String code) =>
       values.firstWhere((t) => t.code == code, orElse: () => adjust);
@@ -17,7 +22,7 @@ class StockTransaction {
   final String medicineName;
   final TransactionType type;
 
-  /// Always positive for IN/OUT; for ADJUST it's the new absolute quantity.
+  /// Always positive for movements; for ADJUST it's the new absolute quantity.
   final int quantity;
   final int balanceAfter;
   final String note;
